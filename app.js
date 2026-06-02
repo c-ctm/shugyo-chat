@@ -26,7 +26,8 @@ const CHUNK_SIZE = 600;
 const CHUNK_OVERLAP = 80;
 const TOP_K = 5;
 const PDF_PARSE_TIMEOUT_MS = 90000;
-const MAX_PAGES_TO_PARSE = 30;
+const MAX_PAGES_TO_PARSE = 8
+;
 
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
