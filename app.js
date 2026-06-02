@@ -25,7 +25,6 @@ const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models
 const CHUNK_SIZE = 600;
 const CHUNK_OVERLAP = 80;
 const TOP_K = 5;
-const PDF_PARSE_TIMEOUT_MS = 90000;
 
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
@@ -105,62 +104,16 @@ function getApiConfig() {
 }
 
 // ===== PDF =====
-function withTimeout(promise, timeoutMs, timeoutMessage) {
-  let timer;
-  return Promise.race([
-    promise,
-    new Promise((_, reject) => {
-      timer = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
-    }),
-  ]).finally(() => clearTimeout(timer));
-}
-
-async function extractTextFromPdf(file, onProgress) {
+async function extractTextFromPdf(file) {
   const buffer = await file.arrayBuffer();
-  let pdf;
-  try {
-    pdf = await withTimeout(
-      pdfjsLib.getDocument({ data: buffer }).promise,
-      PDF_PARSE_TIMEOUT_MS,
-      "PDFの読み込みがタイムアウトしました。容量の小さいPDFでお試しください。"
-    );
-  } catch (err) {
-    // CDNや拡張機能でworkerがブロックされる環境向けフォールバック
-    const message = String(err?.message || "");
-    const shouldFallback =
-      message.includes("worker") ||
-      message.includes("fetch") ||
-      message.includes("network") ||
-      message.includes("Unexpected server response") ||
-      message.includes("timed out");
-    if (!shouldFallback) {
-      throw err;
-    }
-    appendBotMessage("PDFワーカーの読み込みに失敗したため、互換モードで再試行します。");
-    pdf = await withTimeout(
-      pdfjsLib.getDocument({ data: buffer, disableWorker: true }).promise,
-      PDF_PARSE_TIMEOUT_MS,
-      "PDFの読み込みがタイムアウトしました。別のブラウザまたは軽量なPDFでお試しください。"
-    );
-  }
+  const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
   const pages = [];
 
   for (let i = 1; i <= pdf.numPages; i++) {
-    const page = await withTimeout(
-      pdf.getPage(i),
-      15000,
-      `PDF ${i}ページ目の読み込みに時間がかかっています。`
-    );
-    const content = await withTimeout(
-      page.getTextContent(),
-      15000,
-      `PDF ${i}ページ目の文字抽出に時間がかかっています。`
-    );
-    const text = content.items.map((item) => item.str).join(" ");
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    const text = content.items.map((item) => item.str).join("");
     pages.push(text);
-    if (typeof onProgress === "function") {
-      onProgress(i, pdf.numPages);
-    }
   }
 
   return {
@@ -212,17 +165,11 @@ async function handlePdfUpload(file) {
 
   setProcessing(true);
   try {
-    appendBotMessage("PDFを解析中です。ページ数が多い場合は1〜2分かかることがあります。");
-    const { text, pageCount } = await extractTextFromPdf(file, (current, total) => {
-      els.docInfo.classList.remove("hidden");
-      els.docName.textContent = file.name;
-      els.docMeta.textContent = `読み込み中: ${current}/${total} ページ`;
-    });
+    const { text, pageCount } = await extractTextFromPdf(file);
     const normalized = normalizeText(text);
 
     if (normalized.length < 50) {
-      alert("PDFからテキストを読み取れませんでした。スキャン画像のみのPDFの場合は、OCR済み（文字検索できる）PDFをお試しください。");
-      clearDocument();
+      alert("PDFからテキストを読み取れませんでした。スキャン画像のみのPDFの場合は、文字が埋め込まれたPDFをお試しください。");
       return;
     }
 
@@ -241,8 +188,7 @@ async function handlePdfUpload(file) {
     appendBotMessage(`「${state.fileName}」を読み込みました。就業規則について質問してください。`);
   } catch (err) {
     console.error(err);
-    alert(`PDFの読み込みに失敗しました。\n${err.message}`);
-    clearDocument();
+    alert("PDFの読み込みに失敗しました。");
   } finally {
     setProcessing(false);
   }
