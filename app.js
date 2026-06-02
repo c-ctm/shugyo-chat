@@ -26,8 +26,8 @@ const CHUNK_SIZE = 600;
 const CHUNK_OVERLAP = 80;
 const TOP_K = 5;
 const PDF_PARSE_TIMEOUT_MS = 90000;
-const MAX_PAGES_TO_PARSE = 8
-;
+const MAX_PAGES_TO_PARSE = 8;
+const MAX_TOTAL_CHARS = 60000;
 
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
@@ -127,6 +127,7 @@ async function extractTextFromPdf(file, onProgress) {
       "PDFの読み込みがタイムアウトしました。容量の小さいPDFでお試しください。"
     );
   } catch (err) {
+    // CDNや拡張機能でworkerがブロックされる環境向けフォールバック
     const message = String(err?.message || "");
     const shouldFallback =
       message.includes("worker") ||
@@ -144,8 +145,8 @@ async function extractTextFromPdf(file, onProgress) {
       "PDFの読み込みがタイムアウトしました。別のブラウザまたは軽量なPDFでお試しください。"
     );
   }
-
   const pages = [];
+  let totalChars = 0;
   const parsedPages = Math.min(pdf.numPages, MAX_PAGES_TO_PARSE);
 
   for (let i = 1; i <= parsedPages; i++) {
@@ -161,6 +162,18 @@ async function extractTextFromPdf(file, onProgress) {
     );
     const text = content.items.map((item) => item.str).join(" ");
     pages.push(text);
+    totalChars += text.length;
+    if (typeof page.cleanup === "function") {
+      page.cleanup();
+    }
+
+    if (totalChars >= MAX_TOTAL_CHARS) {
+      if (typeof onProgress === "function") {
+        onProgress(i, parsedPages, pdf.numPages);
+      }
+      break;
+    }
+
     if (typeof onProgress === "function") {
       onProgress(i, parsedPages, pdf.numPages);
     }
@@ -169,8 +182,8 @@ async function extractTextFromPdf(file, onProgress) {
   return {
     text: pages.join("\n\n"),
     pageCount: pdf.numPages,
-    parsedPages,
-    isPartial: parsedPages < pdf.numPages,
+    parsedPages: pages.length,
+    isPartial: pages.length < pdf.numPages,
   };
 }
 
@@ -221,13 +234,11 @@ async function handlePdfUpload(file) {
     els.docInfo.classList.remove("hidden");
     els.docName.textContent = file.name;
     els.docMeta.textContent = "読み込み準備中...";
-
     const { text, pageCount, parsedPages, isPartial } = await extractTextFromPdf(file, (current, parseTotal, totalPages) => {
       els.docInfo.classList.remove("hidden");
       els.docName.textContent = file.name;
       els.docMeta.textContent = `読み込み中: ${current}/${parseTotal} ページ（全${totalPages}ページ）`;
     });
-
     const normalized = normalizeText(text);
 
     if (normalized.length < 50) {
@@ -248,11 +259,9 @@ async function handlePdfUpload(file) {
 
     enableChat(true);
     clearWelcomeIfNeeded();
-
     if (isPartial) {
       appendBotMessage(`重いPDFでも止まりにくくするため、先頭${parsedPages}ページを優先解析しました。必要ならページを分けて順番に確認してください。`);
     }
-
     appendBotMessage(`「${state.fileName}」を読み込みました。就業規則について質問してください。`);
   } catch (err) {
     console.error(err);
