@@ -25,6 +25,8 @@ const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models
 const CHUNK_SIZE = 600;
 const CHUNK_OVERLAP = 80;
 const TOP_K = 5;
+const PDF_PARSE_TIMEOUT_MS = 90000;
+const MAX_PAGES_TO_PARSE = 30;
 
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
@@ -104,21 +106,70 @@ function getApiConfig() {
 }
 
 // ===== PDF =====
-async function extractTextFromPdf(file) {
-  const buffer = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
-  const pages = [];
+function withTimeout(promise, timeoutMs, timeoutMessage) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
 
-  for (let i = 1; i <= pdf.numPages; i++) {
-    const page = await pdf.getPage(i);
-    const content = await page.getTextContent();
-    const text = content.items.map((item) => item.str).join("");
+async function extractTextFromPdf(file, onProgress) {
+  const buffer = await file.arrayBuffer();
+  let pdf;
+  try {
+    pdf = await withTimeout(
+      pdfjsLib.getDocument({ data: buffer }).promise,
+      PDF_PARSE_TIMEOUT_MS,
+      "PDFの読み込みがタイムアウトしました。容量の小さいPDFでお試しください。"
+    );
+  } catch (err) {
+    const message = String(err?.message || "");
+    const shouldFallback =
+      message.includes("worker") ||
+      message.includes("fetch") ||
+      message.includes("network") ||
+      message.includes("Unexpected server response") ||
+      message.includes("timed out");
+    if (!shouldFallback) {
+      throw err;
+    }
+    appendBotMessage("PDFワーカーの読み込みに失敗したため、互換モードで再試行します。");
+    pdf = await withTimeout(
+      pdfjsLib.getDocument({ data: buffer, disableWorker: true }).promise,
+      PDF_PARSE_TIMEOUT_MS,
+      "PDFの読み込みがタイムアウトしました。別のブラウザまたは軽量なPDFでお試しください。"
+    );
+  }
+
+  const pages = [];
+  const parsedPages = Math.min(pdf.numPages, MAX_PAGES_TO_PARSE);
+
+  for (let i = 1; i <= parsedPages; i++) {
+    const page = await withTimeout(
+      pdf.getPage(i),
+      10000,
+      `PDF ${i}ページ目の読み込みに時間がかかっています。`
+    );
+    const content = await withTimeout(
+      page.getTextContent(),
+      10000,
+      `PDF ${i}ページ目の文字抽出に時間がかかっています。`
+    );
+    const text = content.items.map((item) => item.str).join(" ");
     pages.push(text);
+    if (typeof onProgress === "function") {
+      onProgress(i, parsedPages, pdf.numPages);
+    }
   }
 
   return {
     text: pages.join("\n\n"),
     pageCount: pdf.numPages,
+    parsedPages,
+    isPartial: parsedPages < pdf.numPages,
   };
 }
 
@@ -165,11 +216,22 @@ async function handlePdfUpload(file) {
 
   setProcessing(true);
   try {
-    const { text, pageCount } = await extractTextFromPdf(file);
+    appendBotMessage("PDFを解析中です。ページ数が多い場合は1〜2分かかることがあります。");
+    els.docInfo.classList.remove("hidden");
+    els.docName.textContent = file.name;
+    els.docMeta.textContent = "読み込み準備中...";
+
+    const { text, pageCount, parsedPages, isPartial } = await extractTextFromPdf(file, (current, parseTotal, totalPages) => {
+      els.docInfo.classList.remove("hidden");
+      els.docName.textContent = file.name;
+      els.docMeta.textContent = `読み込み中: ${current}/${parseTotal} ページ（全${totalPages}ページ）`;
+    });
+
     const normalized = normalizeText(text);
 
     if (normalized.length < 50) {
-      alert("PDFからテキストを読み取れませんでした。スキャン画像のみのPDFの場合は、文字が埋め込まれたPDFをお試しください。");
+      alert("PDFからテキストを読み取れませんでした。スキャン画像のみのPDFの場合は、OCR済み（文字検索できる）PDFをお試しください。");
+      clearDocument();
       return;
     }
 
@@ -181,14 +243,20 @@ async function handlePdfUpload(file) {
     els.uploadZone.classList.add("loaded");
     els.docInfo.classList.remove("hidden");
     els.docName.textContent = state.fileName;
-    els.docMeta.textContent = `${state.pageCount}ページ · ${state.chunks.length}セクションに分割済み`;
+    els.docMeta.textContent = `${parsedPages}/${state.pageCount}ページ解析 · ${state.chunks.length}セクションに分割済み`;
 
     enableChat(true);
     clearWelcomeIfNeeded();
+
+    if (isPartial) {
+      appendBotMessage(`重いPDFでも止まりにくくするため、先頭${parsedPages}ページを優先解析しました。必要ならページを分けて順番に確認してください。`);
+    }
+
     appendBotMessage(`「${state.fileName}」を読み込みました。就業規則について質問してください。`);
   } catch (err) {
     console.error(err);
-    alert("PDFの読み込みに失敗しました。");
+    alert(`PDFの読み込みに失敗しました。\n${err.message}`);
+    clearDocument();
   } finally {
     setProcessing(false);
   }
