@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>就業規則チャット｜AIデモ</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <span class="logo-icon">📋</span>
+        <div>
+          <h1>就業規則チャット</h1>
+          <p class="subtitle">PDFを読み込んで質問に答えます</p>
+        </div>
+      </div>
+
+      <section class="panel">
+        <h2>就業規則 PDF</h2>
+        <div class="upload-zone" id="uploadZone">
+          <input type="file" id="fileInput" accept=".pdf,application/pdf" hidden>
+          <div class="upload-icon">📄</div>
+          <p>PDFをドラッグ＆ドロップ<br>またはクリックして選択</p>
+        </div>
+        <div id="docInfo" class="doc-info hidden">
+          <p class="doc-name" id="docName"></p>
+          <p class="doc-meta" id="docMeta"></p>
+          <button type="button" class="btn btn-ghost btn-sm" id="btnClearDoc">PDFを差し替え</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>よくある質問</h2>
+        <div class="sample-questions" id="sampleQuestions">
+          <button type="button" class="chip" data-q="有給休暇は何日もらえますか？">有給休暇の日数</button>
+          <button type="button" class="chip" data-q="残業時間の上限は？">残業のルール</button>
+          <button type="button" class="chip" data-q="試用期間はどのくらいですか？">試用期間</button>
+          <button type="button" class="chip" data-q="退職の手続きを教えて">退職手続き</button>
+        </div>
+      </section>
+
+      <section class="panel settings-panel">
+        <details id="settingsDetails" open>
+          <summary>API設定</summary>
+          <div class="settings-body">
+            <label class="field">
+              <span>AIサービス</span>
+              <select id="provider">
+                <option value="google">Google AI Studio（Gemini）</option>
+                <option value="openai">OpenAI</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>APIキー</span>
+              <input type="password" id="apiKey" placeholder="AIza..." autocomplete="off">
+            </label>
+            <label class="field">
+              <span>モデル</span>
+              <input type="text" id="model" value="gemini-2.0-flash" placeholder="gemini-2.0-flash">
+            </label>
+            <label class="field field-advanced hidden" id="apiUrlField">
+              <span>API URL（OpenAI互換・任意）</span>
+              <input type="url" id="apiUrl" placeholder="https://api.openai.com/v1/chat/completions">
+            </label>
+            <p class="hint" id="settingsHint">
+              Google AI Studio（<a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com</a>）で無料のAPIキーを取得できます。キーはお使いのPCのブラウザにのみ保存されます。
+            </p>
+            <button type="button" class="btn btn-secondary btn-sm" id="btnSaveSettings">設定を保存</button>
+          </div>
+        </details>
+      </section>
+
+      <footer class="sidebar-footer">
+        <p>💡 AI（Cursor）で作成したデモアプリ</p>
+      </footer>
+    </aside>
+
+    <main class="chat-main">
+      <div class="chat-messages" id="chatMessages">
+        <div class="welcome">
+          <div class="welcome-icon">💬</div>
+          <h2>就業規則について何でも聞いてください</h2>
+          <p>左のパネルから就業規則のPDFをアップロードすると、内容に基づいて回答します。</p>
+          <ol class="steps">
+            <li>PDFをアップロード</li>
+            <li>APIキーを設定（初回のみ）</li>
+            <li>チャットで質問</li>
+          </ol>
+        </div>
+      </div>
+
+      <form class="chat-input-area" id="chatForm">
+        <textarea
+          id="questionInput"
+          rows="1"
+          placeholder="例：育児休業は何日取れますか？"
+          disabled
+          aria-label="質問入力"
+        ></textarea>
+        <button type="submit" class="btn btn-primary btn-send" id="btnSend" disabled aria-label="送信">
+          送信
+        </button>
+      </form>
+    </main>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
